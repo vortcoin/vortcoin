@@ -1,0 +1,25 @@
+name: VORTCOIN L1 Node Continuous Deployment
+
+on:
+  push:
+    branches: [ main ]  # Memicu otomatisasi hanya saat push ke branch main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository Code
+      uses: actions/checkout@v4
+
+    - name: Execute Hot-Patch Update on Contabo Server via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: '158.220.100.186'
+        username: 'root'
+        key: ${{ secrets.CONTABO_SSH_PRIVATE_KEY }}
+        port: 22
+        script: |
+          cd /root/vortcoin
+          chmod +x *.sh
+          ./vortcoin-update-node.sh

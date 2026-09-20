@@ -1,0 +1,11 @@
+{
+  "network_name": "vortcoin_pure_decentralization_matrix",
+  "genesis_time": 1787336900,
+  "era": 1,
+  "allocations": {},
+  "protocol_constants": {
+    "max_supply_nano": 36900000000000000,
+    "burn_tax_rate": 0.369
+  }
+}
+

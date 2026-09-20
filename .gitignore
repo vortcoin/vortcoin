@@ -1,0 +1,23 @@
+# =========================================================================
+# VORTCOIN NETWORK - REPOSITORY GITIGNORE CONFIGURATION
+# =========================================================================
+
+# 1. Mengunci Database Sled Lokal (PENTING: Mencegah kebocoran ledger testing)
+vortcoin_ledger_db/
+vortcoin_ledger_db/*
+
+# 2. Mengabaikan Hasil Kompilasi Biner Rust (Beban Target Folder)
+target/
+target/*
+
+# 3. Mengabaikan File Kunci Kargo & Cache Internal Os
+**/*.rs.bk
+Cargo.lock
+.DS_Store
+.idea/
+.vscode/
+
+# 4. Mengabaikan File Log Transaksi Manifes Lokal
+*.log
+
+
