@@ -46,16 +46,17 @@ fi
 echo "Network ports 3690 (P2P) and 8545 (RPC) have been officially opened."
 # -------------------------------------------------------------------------
 
+
 # 2. Automatically install the Rust compiler (if not already installed)
-if ! command -v cargo &> /dev/null; then
+if ! [ -f "$ACTUAL_HOME/.cargo/bin/cargo" ]; then
     echo "Rust not found. Installing Rust Compiler (industry standard)..."
-    # Running Rust installation as the original user (not root)
+    # PERBAIKAN: Menggunakan perintah sh dengan flag -s untuk menghindari syntax error newline
     sudo -u "$ACTUAL_USER" curl --proto '=https' --tlsv1.2 -sSf https://rustup.rs | sudo -u "$ACTUAL_USER" sh -s -- -y
-    # Loads the env path so that the current script session recognizes cargo
-    source "$ACTUAL_HOME/.cargo/env"
-else
-    echo "The Rust compiler is ready for use."
 fi
+
+export PATH="$ACTUAL_HOME/.cargo/bin:$PATH"
+echo "The Rust compiler framework is ready for compilation cycles."
+
 
 # 3. Downloading the VORTCOIN Core blockchain code from the official repository
 echo "Downloading VORTCOIN Core Engine from the global repository..."
