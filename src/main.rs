@@ -87,6 +87,9 @@ enum Commands {
     NodeStart {
         #[arg(short, long)]
         miner_address: Option<String>,
+
+        #[arg(short, long)]
+        remote: Option<String>, // e.g: "https://rpc.vortcoin.org"
     },
     /// 8. Bridge-To-Wrapped: Locking native L1 coins to mint wVORT on EVM/Solana
     BridgeToWrapped {
@@ -403,8 +406,8 @@ async fn main() {
             println!("Total Accounts Moved: {} Global Addresses", imported_count);
             println!("====================================================");
         }
-        
-        Commands::NodeStart { miner_address } => {
+
+        Commands::NodeStart { miner_address, .. } => {
             println!("====================================================");
             echo_vortcoin_banner();
             println!("Opening P2P Socket Connection on Standard Port: 3690");
@@ -432,17 +435,7 @@ async fn main() {
                 start_rpc_api_gateway(storage_rpc, 8545).await;
             });
             
-            //Read the last state from the Sled DB (so it doesn't start from scratch upon restart)
-            let mut current_height = match storage.db.get("chain_current_height") {
-                Ok(Some(bytes)) => {
-                    let mut arr = [0u8; 8];
-                    arr.copy_from_slice(&bytes[..8]);
-                    u64::from_be_bytes(arr)
-                },
-                _ => 1u64,
-            };
-
-            let mut current_circulating_nano = match storage.db.get("chain_circulating_nano") {
+            let mut current_circulating_nano: u64 = match storage.db.get("chain_circulating_nano") {
                 Ok(Some(bytes)) => {
                     let mut arr = [0u8; 8];
                     arr.copy_from_slice(&bytes[..8]);
@@ -450,14 +443,48 @@ async fn main() {
                 },
                 _ => 0u64,
             };
+            
+            if current_circulating_nano == 0 {
+                let mut scanned_total: u64 = 0;
+                for item in storage.db.scan_prefix(b"acc_") {
+                    if let Ok((_k, val)) = item {
+                        if let Ok(acc) = serde_json::from_slice::<crate::models::Account>(&val) {
+                            scanned_total = scanned_total.saturating_add(acc.balance);
+                        }
+                    }
+                }
+                if scanned_total > 0 {
+                    current_circulating_nano = scanned_total;
+                    let _ = storage.db.insert("chain_circulating_nano", &current_circulating_nano.to_be_bytes());
+                    let _ = storage.db.flush();
+                    println!("[AUTO-RECOVERY] Synced {:.4} VORT from existing database accounts!", current_circulating_nano as f64 / 1_000_000_000.0);
+                }
+            }
+            
+            let mut current_height: u64 = match storage.db.get("chain_current_height") {
+                Ok(Some(bytes)) => {
+                    let mut arr = [0u8; 8];
+                    arr.copy_from_slice(&bytes[..8]);
+                    u64::from_be_bytes(arr)
+                },
+                _ => 1u64,
+            };
+            
+            let estimated_height = (current_circulating_nano / 10_000_000_000) as u64;
+            if current_height <= 1 && estimated_height > 1 {
+                current_height = estimated_height;
+                let _ = storage.db.insert("chain_current_height", &current_height.to_be_bytes());
+                let _ = storage.db.flush();
+                println!("[AUTO-RECOVERY] Calibrated Block Height to #{} based on circulating volume.", current_height);
+            }
 
             let mut current_difficulty: u32 = 12;
-            let target_block_time_secs: u64 = 30; // 30-second speed benchmark
+            let target_block_time_secs: u64 = 30;
             
             // INFINITE MINING LOOP
             loop {
                 let block_timer_start = Instant::now();
-                let current_era = (current_height - 1) / BLOCKS_PER_ERA + 1;
+                let current_era = ((current_height.saturating_sub(1)) / BLOCKS_PER_ERA) + 1;
                 let reward_nano = calculate_adaptive_block_reward(current_height, current_circulating_nano);
                 
                 println!("----------------------------------------------------");
@@ -471,7 +498,7 @@ async fn main() {
                         let account_bytes = storage.get_account(&target_payout_address);
                         let mut miner_account = match account_bytes {
                             Some(bytes) => serde_json::from_slice(&bytes).unwrap(),
-                            None => Account {
+                            None => crate::models::Account {
                                 address: target_payout_address.clone(),
                                 balance: 0,
                                 rwa_holdings: HashMap::new(),
@@ -482,7 +509,6 @@ async fn main() {
                         miner_account.balance = miner_account.balance.saturating_add(reward_nano);
                         let _ = storage.save_account(&target_payout_address, &miner_account);
                         
-                        // Accumulate actual circulation
                         current_circulating_nano = current_circulating_nano.saturating_add(reward_nano);
                         let _ = storage.db.insert("chain_circulating_nano", &current_circulating_nano.to_be_bytes());
                         let _ = storage.db.insert("chain_current_height", &(current_height + 1).to_be_bytes());
@@ -506,12 +532,11 @@ async fn main() {
                     break;
                 }
                 
-                // Consensus loop heartbeat interval
                 tokio::time::sleep(Duration::from_secs(target_block_time_secs.min(5))).await;
                 current_height += 1;
             }
             println!("====================================================");
-        }        
+        }
     }
 }
 

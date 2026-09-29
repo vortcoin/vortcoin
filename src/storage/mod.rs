@@ -62,6 +62,28 @@ impl VortcoinStorage {
         }
     }
 
+    // =================================================================================
+    // Automatically calculating the total circulation across all wallets in the SLED DB
+    // =================================================================================
+
+    pub fn calculate_dynamic_circulating_supply(db: &sled::Db) -> (u128, f64, u64) {
+        let mut total_nano: u128 = 0;
+        let mut account_count: u64 = 0;
+
+        // Scan all stored account records with the prefix "acc_"
+        for item in db.scan_prefix(b"acc_") {
+            if let Ok((_key, val)) = item {
+                if let Ok(account) = serde_json::from_slice::<Account>(&val) {
+                    total_nano = total_nano.saturating_add(account.balance as u128);
+                    account_count += 1;
+                }
+            }
+        }
+
+        let total_vort = (total_nano as f64) / 1_000_000_000.0;
+        (total_nano, total_vort, account_count)
+    }
+
     /// Account balance credit (used by PoAV Mining Reward)
     pub fn credit_balance(&self, address: &str, amount_nano: u64) -> Result<u64, &'static str> {
         let mut account = self.get_or_create_account(address);
