@@ -444,21 +444,20 @@ async fn main() {
                 _ => 0u64,
             };
             
-            if current_circulating_nano == 0 {
-                let mut scanned_total: u64 = 0;
-                for item in storage.db.scan_prefix(b"acc_") {
-                    if let Ok((_k, val)) = item {
-                        if let Ok(acc) = serde_json::from_slice::<crate::models::Account>(&val) {
-                            scanned_total = scanned_total.saturating_add(acc.balance);
-                        }
+            let mut scanned_total: u64 = 0;
+            for item in storage.db.scan_prefix(b"acc_") {
+                if let Ok((_k, val)) = item {
+                    if let Ok(acc) = serde_json::from_slice::<crate::models::Account>(&val) {
+                        scanned_total = scanned_total.saturating_add(acc.balance);
                     }
                 }
-                if scanned_total > 0 {
-                    current_circulating_nano = scanned_total;
-                    let _ = storage.db.insert("chain_circulating_nano", &current_circulating_nano.to_be_bytes());
-                    let _ = storage.db.flush();
-                    println!("[AUTO-RECOVERY] Synced {:.4} VORT from existing database accounts!", current_circulating_nano as f64 / 1_000_000_000.0);
-                }
+            }
+            
+            if scanned_total > current_circulating_nano {
+                current_circulating_nano = scanned_total;
+                let _ = storage.db.insert("chain_circulating_nano", &current_circulating_nano.to_be_bytes());
+                let _ = storage.db.flush();
+                println!("[AUTO-RECOVERY] Synced {:.4} VORT from existing database accounts!", current_circulating_nano as f64 / 1_000_000_000.0);
             }
             
             let mut current_height: u64 = match storage.db.get("chain_current_height") {
@@ -471,7 +470,7 @@ async fn main() {
             };
             
             let estimated_height = (current_circulating_nano / 10_000_000_000) as u64;
-            if current_height <= 1 && estimated_height > 1 {
+            if current_height < estimated_height {
                 current_height = estimated_height;
                 let _ = storage.db.insert("chain_current_height", &current_height.to_be_bytes());
                 let _ = storage.db.flush();
