@@ -10,20 +10,19 @@ use std::time::{Instant, Duration};
 use warp::Filter;
 use wasmi::{Engine, Module, Store, Linker, Instance};
 
-
-mod consensus {
+pub mod consensus {
     pub mod genesis;
     pub mod price_discovery;
     pub mod poav;
 }
-mod rpc {
+pub mod rpc {
     pub mod handler;
 }
 
-mod models;
-mod crypto;
-mod storage;
-mod rwa;
+pub mod models;
+pub mod crypto;
+pub mod storage;
+pub mod rwa;
 
 use models::Account;
 use crypto::wallet_secure::SecureVortcoinWallet;
@@ -34,9 +33,11 @@ mod p2p {
     pub mod security;
 }
 
-// VORTCOIN Cosmic Macro Constant According to the Whitepaper (Tesla 3-6-9 Alignment)
-const MAX_SUPPLY_NANO: u64 = 36_900_000 * 1_000_000_000; // 36.9 million pure VORT
-const BLOCKS_PER_ERA: u64 = 3_690_000;
+// =========================================================================
+// VORTCOIN COSMIC MACRO CONSTANTS (Tesla 3-6-9 Alignment)
+// =========================================================================
+pub const MAX_SUPPLY_NANO: u64 = 36_900_000 * 1_000_000_000; // 36.9 Million Pure VORT
+pub const BLOCKS_PER_ERA: u64 = 369_000;                     // 369.000 Blok per Era (10% per era)
 
 #[derive(Parser)]
 #[command(name = "vortcoin-cli")]
@@ -85,56 +86,56 @@ enum Commands {
     /// 7. Node-Start: Activating the Proof of Adaptive Velocity (PoAV) Mining Engine
     NodeStart {
         #[arg(short, long)]
-        miner_address: Option<String>, // Must use `Option<String>` to be able to accept a null value (`None`)
+        miner_address: Option<String>,
     },
-    /// 8. Bridge-To-Wrapped: Locking native L1 coins to mint wVORT on EVM/Solana (Listing Router)
+    /// 8. Bridge-To-Wrapped: Locking native L1 coins to mint wVORT on EVM/Solana
     BridgeToWrapped {
         #[arg(short, long)]
         from_address: String,
         #[arg(short, long)]
-        target_network: String, // "ethereum" or "solana"
+        target_network: String,
         #[arg(short, long)]
-        target_wallet_escrow: String, // wVORT Recipient Escrow Wallet on External Network
+        target_wallet_escrow: String,
         #[arg(short, long)]
         amount: u64,
     },
-    /// 9. Bridge-To-Native: Swap back external wVORT (Arbitrum-based) to native L1 VORT coins
+    /// 9. Bridge-To-Native: Swap back external wVORT to native L1 VORT coins
     BridgeToNative {
         #[arg(short, long)]
         to_address: String,
         #[arg(short, long)]
         from_network: String,
         #[arg(short, long)]
-        proof_tx_hash: String, // Tx Hash Proof of wV0RT Burn on EVM/Solana
+        proof_tx_hash: String,
         #[arg(short, long)]
         amount: u64,
     },
-    /// 10. Core-Import-Snapshot: Emergency migration command to ingest balance data from the old chain (The Pivot Option)
+    /// 10. Core-Import-Snapshot: Emergency migration command
     CoreImportSnapshot {
         #[arg(short, long)]
-        file_path: String, // Location of the snapshot_balance.json file
+        file_path: String,
     },
 }
 
-
-// Bit-Shift Halving Emission Calculation & Global Circulation Upper-Cap Protection
-fn calculate_adaptive_block_reward(current_height: u64, current_circulating_nano: u64) -> u64 {
+/// Bit-Shift Halving Emission Calculation & Global Circulation Upper-Cap Protection
+pub fn calculate_adaptive_block_reward(current_height: u64, current_circulating_nano: u64) -> u64 {
     if current_height == 0 {
         return 0;
     }
 
-    // Era 1 begins immediately with Block #1.
+    // Era 1 spans from Block #1 to #369,000 (10 VORT)
+    // Era 2 spans from #369,001 to #738,000 (5 VORT), etc
     let era = (current_height - 1) / BLOCKS_PER_ERA;
-    let initial_reward_nano = 10 * 1_000_000_000; // As per Whitepaper: Initial Reward 10.0 VORTC
+    let initial_reward_nano = 10 * 1_000_000_000; // Initial Reward 10.0 VORT
 
-    // Perform a right bit-shift on a Rust register for automatic halving
+    // Right bit-shift for automatic halving: 10 -> 5 -> 2.5 -> 1.25 ...
     let standard_reward = if era >= 64 { 0 } else { initial_reward_nano >> era };
 
-    // Cosmic Sacred Boundary Protection VORTCOIN L1
+    // Sacred limit protection: Max Supply of 36.9 million.
     if current_circulating_nano >= MAX_SUPPLY_NANO {
         0 
     } else if current_circulating_nano + standard_reward > MAX_SUPPLY_NANO {
-        MAX_SUPPLY_NANO - current_circulating_nano // Print the last remaining supply space
+        MAX_SUPPLY_NANO - current_circulating_nano
     } else {
         standard_reward
     }
@@ -145,15 +146,16 @@ async fn main() {
     let cli = Cli::parse();
     let storage = VortcoinStorage::init("./vortcoin_ledger_db");
     
-        // INIT GENESIS CHECK: Global system initialization marker
+    // INIT GENESIS CHECK: Global system initialization marker
     if storage.db.get("system_genesis_state").unwrap().is_none() {
         println!("[GENESIS LOGIC] Activating Era 0... Reading Public Liquidity Allocations.");
         let genesis_ledger = consensus::genesis::generate_genesis_ledger();
         for (addr, account) in genesis_ledger {
             let _ = storage.save_account(&addr, &account);
         }
-        // Lock the status to prevent triggering a reprint of the notice at any terminal
         let _ = storage.db.insert("system_genesis_state", b"initialized");
+        let _ = storage.db.insert("chain_current_height", &1u64.to_be_bytes());
+        let _ = storage.db.insert("chain_circulating_nano", &0u64.to_be_bytes());
         let _ = storage.db.flush();
         println!("Genesis Anchor Vault successfully initialized. Ready for DEX routing.");
     }
@@ -179,17 +181,17 @@ async fn main() {
             println!("Seed Phrase (24 Words): {}\n", wallet.mnemonic_phrase);
         }
 
-       Commands::Balance { address } => {
+        Commands::Balance { address } => {
             if let Some(data) = storage.get_account(address) {
                 let account: Account = serde_json::from_slice(&data).unwrap();
                 println!("VORTCOIN ON-CHAIN ACCOUNT BALANCE REPORT:");
                 println!("----------------------------------------------------");
                 println!("Native VORT Balance   : {:.9} VORT", account.balance as f64 / 1_000_000_000.0);
-                println!("Real World Assets    : {} Kategori", account.rwa_holdings.len());
+                println!("Real World Assets    : {} Category", account.rwa_holdings.len());
                 for (id, amt) in &account.rwa_holdings {
-                    println!(" └─ Asset ID [{}] : {} Saham Pecahan", id, amt);
+                    println!(" └─ Asset ID [{}] : {} Fractional Shares", id, amt);
                 }
-                println!("Memecoin Portfolio   : {} Token Komunitas", account.meme_holdings.len());
+                println!("Memecoin Portfolio   : {} Community Tokens", account.meme_holdings.len());
                 for (id, amt) in &account.meme_holdings {
                     println!(" └─ Meme ID [{}] : {} Token", id, amt);
                 }
@@ -212,7 +214,6 @@ async fn main() {
             let mut sender: Account = serde_json::from_slice(&from_data.unwrap()).unwrap();
             let mut receiver: Account = serde_json::from_slice(&to_data.unwrap()).unwrap();
 
-            // Dynamic gas costs with a 36.9% burn ratio remain in effect.
             let gas_fee = get_dynamic_gas_fee(&storage); 
             let total_charge = nano_amount + gas_fee;
 
@@ -260,9 +261,7 @@ async fn main() {
             };
             let initial_reward_nano = 10 * 1_000_000_000;
             let floor_price = consensus::price_discovery::VortcoinPriceDiscovery::calculate_intrinsic_floor_price(&mock_param, initial_reward_nano);
-            
             let total_daily_emission = 28800.0;
-
             
             println!("MARKET VIABILITY METRICS (FAIR LAUNCH PHASE):");
             println!("----------------------------------------------------");
@@ -275,16 +274,16 @@ async fn main() {
         Commands::YieldClaim { address, asset_id } => {
             println!("Connecting to SPV Financial Custodian & Reading Price Oracle...");
             let mock_pool = rwa::yield_engine::RwaYieldPool {
-            pool_id: String::from("pool_august_2026"),
-            total_accumulated_usd: 10000,
-            buyback_rate_vort: 100000,
+                pool_id: String::from("pool_august_2026"),
+                total_accumulated_usd: 10000,
+                buyback_rate_vort: 100000,
             };
-            match rwa::yield_engine::VortcoinYieldEngine::distribute_rwa_dividend(&storage, address,
-            &mock_pool, asset_id) {
-            Ok(reward) => {
-            println!("\n RWA DIVIDEND CLAIM SUCCESSFUL!");
-            println!(" Total VORT credited  : {:.9} VORT", reward as f64 / 1_000_000_000.0);},
-            Err(e) => println!("\n Claim Failed: {}", e),
+            match rwa::yield_engine::VortcoinYieldEngine::distribute_rwa_dividend(&storage, address, &mock_pool, asset_id) {
+                Ok(reward) => {
+                    println!("\n RWA DIVIDEND CLAIM SUCCESSFUL!");
+                    println!(" Total VORT credited  : {:.9} VORT", reward as f64 / 1_000_000_000.0);
+                },
+                Err(e) => println!("\n Claim Failed: {}", e),
             }
         }
         
@@ -306,11 +305,9 @@ async fn main() {
                 return;
             }
 
-            // Retrieve L1 bridge outlet account data to physically lock the funds
             let bridge_outlet_data = storage.get_account(consensus::genesis::VORTCOIN_CROSS_CHAIN_BRIDGE_OUTLET);
             let mut bridge_outlet: Account = serde_json::from_slice(&bridge_outlet_data.unwrap()).unwrap();
 
-            // Transfer funds from the user/foundation to the L1 Bridge Lockbox.
             sender.balance -= total_charge;
             bridge_outlet.balance += nano_amount;
 
@@ -321,20 +318,9 @@ async fn main() {
             println!("[VORTCOIN L1 CROSS-CHAIN BRIDGE] ASSET SUCCESSFULLY LOCKED!");
             println!("=================================================================");
             println!("L1 Native Status   : {} VORT successfully locked on-chain.", amount);
-            println!("locking Safe   : {}", consensus::genesis::VORTCOIN_CROSS_CHAIN_BRIDGE_OUTLET);
+            println!("Locking Safe       : {}", consensus::genesis::VORTCOIN_CROSS_CHAIN_BRIDGE_OUTLET);
             println!("Target Network     : {}", target_network.to_uppercase());
-            
-            // --- NETWORK TARGET ESCROW WALLET PLACEMENT MARKER ---
-            if target_network.to_lowercase() == "ethereum" {
-                println!(" EVM ESCROW TARGET : [ Uniswap v3 Pool Router Layer ]");
-                println!("    Please transfer wVORT (ERC-20) to the following Ethereum escrow wallet:");
-                println!("    [{}]", target_wallet_escrow); // Example location for entering the Uniswap Vault / Multi-sig EVM address
-            } else if target_network.to_lowercase() == "solana" {
-                println!("RUST/SOLANA ESCROW: [ Raydium AMM Pool Router Layer ]");
-                println!("    Please transfer wVTR (SPL Token) to the following Solana escrow wallet.:");
-                println!("    [{}]", target_wallet_escrow); // Example of where to place the Raydium Vault / Solana Multi-sig address
-            }
-            println!("INFO: The Relayer Node is now broadcasting wrapped coin mint commands...");
+            println!("Escrow Target      : [{}]", target_wallet_escrow);
             println!("=================================================================");
         }
 
@@ -343,13 +329,12 @@ async fn main() {
             let receiver_data = storage.get_account(to_address);
 
             if receiver_data.is_none() {
-                println!("Arbitrage Failed: The destination address for the native L1 coin is invalid.");
+                println!("Arbitrage Failed: The destination address is invalid.");
                 return;
             }
 
-            // Verification of wVORT burn Tx Hash proof from arbitrage traders.
             if proof_tx_hash.len() < 32 {
-                println!("Arbitrage Failed: Tx Hash proof transaction from {} is flawed/invalid!", from_network);
+                println!("Arbitrage Failed: Tx Hash proof from {} is invalid!", from_network);
                 return;
             }
 
@@ -363,7 +348,6 @@ async fn main() {
 
             let mut receiver: Account = serde_json::from_slice(&receiver_data.unwrap()).unwrap();
 
-            // Unlock native L1 coins from the bridge vault to the arbitrageur's wallet.
             bridge_outlet.balance -= nano_amount;
             receiver.balance += nano_amount;
 
@@ -373,10 +357,8 @@ async fn main() {
             println!("=================================================================");
             println!("[VORTCOIN L1 ARBITRAGE ENGINE] WRAPPED TO NATIVE LIQUIDITY RELEASED");
             println!("=================================================================");
-            println!("Source External Network : {}", from_network.to_uppercase());
-            println!("Burn Proof Tx     : {}", proof_tx_hash);
-            println!("Redemption Result    : {} native VORT sent to your L1 wallet.", amount);
-            println!("ARBITRAGE MARKET DYNAMICS: The L1 VORTCOIN coin price has now re-synchronized.");
+            println!("Source Network    : {}", from_network.to_uppercase());
+            println!("Redemption Result : {} native VORT sent to your L1 wallet.", amount);
             println!("=================================================================");
         }
         
@@ -385,7 +367,6 @@ async fn main() {
             println!("[VORTCOIN L1 PIVOT ENGINE] STARTING EMERGENCY MIGRATION...");
             println!("====================================================");
             
-            // Reading external snapshot files
             let file_res = std::fs::File::open(file_path);
             if file_res.is_err() {
                 println!("Migration Failed: Snapshot file '{}' not found.", file_path);
@@ -399,7 +380,6 @@ async fn main() {
                 return;
             }
 
-            // Parsing the data snapshot into a map of addresses and balances (Address -> Balance)
             let snapshot_data: Result<HashMap<String, u64>, _> = serde_json::from_str(&json_str);
             if snapshot_data.is_err() {
                 println!("Migration Failed: The JSON format in the snapshot file is invalid.");
@@ -409,87 +389,84 @@ async fn main() {
             let accounts_map = snapshot_data.unwrap();
             let mut imported_count = 0;
 
-            println!("Injecting legacy ledger data into the Sled Pure L1 database...");
-
             for (address, balance_nano) in accounts_map {
-                
                 let synced_account = Account {
                     address: address.clone(),
                     balance: balance_nano,
                     rwa_holdings: HashMap::new(),
                     meme_holdings: HashMap::new(),
                 };
-
                 let _ = storage.save_account(&address, &synced_account);
                 imported_count += 1;
             }
 
-            println!("====================================================");
-            println!("EMERGENCY MIGRATION SUCCESSFULLY ALLOCATED!");
-            println!("====================================================");
-            println!("Total Accounts Moved  : {} Global Addresses", imported_count);
-            println!("Ticker Maintained          : VORT (Pure Desentralisasi Edition)");
-            println!("INFO: The pure chain is now ready to resume fair emission of 10 VORT.");
+            println!("Total Accounts Moved: {} Global Addresses", imported_count);
             println!("====================================================");
         }
         
-         Commands::NodeStart { miner_address } => {
+        Commands::NodeStart { miner_address } => {
             println!("====================================================");
             echo_vortcoin_banner();
-            println!("Opening a P2P Socket Connection on a Standard Port: 3690");
+            println!("Opening P2P Socket Connection on Standard Port: 3690");
             
             let _listener = TcpListener::bind("0.0.0.0:3690");
             
-            // Smart Logic: Automatic mining payment address detection and anti-tamper protection
             let target_payout_address = match miner_address.as_ref() {
                 Some(addr) => {
                     if addr == consensus::genesis::VORTCOIN_ANCHOR_NODE_LOCK {
-                        println!("====================================================");
-                        println!("L1 CONSENSUS ERROR: NODE INITIALIZATION REJECTED!");
-                        println!("====================================================");
-                        println!("Message: You are not allowed to use the Vault Address");
-                        println!("Anchor Hub as the payment target for retail nodes.");
-                        println!("====================================================");
+                        println!("L1 CONSENSUS ERROR: Node Initialization Rejected! Vault is reserved.");
                         std::process::exit(0);
                     }
-                    println!("Active Retail Miner Node!");
+                    println!("Active Retail Miner Node: {}", addr);
                     addr.clone()
                 },
                 None => {
                     println!("NODE ANCHOR DEVELOPER (BOOTNODE) DETECTED!");
-                    println!("Note: The initial block emission reward is allocated to the Anchor Vault.");
                     consensus::genesis::VORTCOIN_ANCHOR_NODE_LOCK.to_string()
                 }
             };
 
-            println!("Payment Address for Mining Proceeds: {}", target_payout_address);
-            println!("----------------------------------------------------");
-            
-            // Spawning the RPC Gateway server asynchronously in the background on Port 8545
+            // START RPC GATEWAY ASYNCHRONOUSLY ON PORT 8545
             let storage_rpc = storage.clone();
             tokio::spawn(async move {
                 start_rpc_api_gateway(storage_rpc, 8545).await;
             });
-                        
-            let mut current_height = 1;
-            let mut current_difficulty: u32 = 12; // INTEGRATION FIX: Base parameter difficulty initialization
-            let target_block_time_secs: u64 = 30; // INTEGRATION FIX: 30 seconds macroeconomic time target constraint
             
-            // INFINITE MINING LOOP (Runs automatically and continuously until CTRL+C is pressed)
+            //Read the last state from the Sled DB (so it doesn't start from scratch upon restart)
+            let mut current_height = match storage.db.get("chain_current_height") {
+                Ok(Some(bytes)) => {
+                    let mut arr = [0u8; 8];
+                    arr.copy_from_slice(&bytes[..8]);
+                    u64::from_be_bytes(arr)
+                },
+                _ => 1u64,
+            };
+
+            let mut current_circulating_nano = match storage.db.get("chain_circulating_nano") {
+                Ok(Some(bytes)) => {
+                    let mut arr = [0u8; 8];
+                    arr.copy_from_slice(&bytes[..8]);
+                    u64::from_be_bytes(arr)
+                },
+                _ => 0u64,
+            };
+
+            let mut current_difficulty: u32 = 12;
+            let target_block_time_secs: u64 = 30; // 30-second speed benchmark
+            
+            // INFINITE MINING LOOP
             loop {
-                let block_timer_start = Instant::now(); // INTEGRATION FIX: Start loop latency velocity tracking immediately
+                let block_timer_start = Instant::now();
+                let current_era = (current_height - 1) / BLOCKS_PER_ERA + 1;
+                let reward_nano = calculate_adaptive_block_reward(current_height, current_circulating_nano);
                 
-                // Circulation assumption for testnet simulation (Kept simple to prevent data lock errors)
-                let current_circulating = current_height * 10 * 1_000_000_000; 
-                let reward_nano = calculate_adaptive_block_reward(current_height, current_circulating);
-                
-                // INTEGRATION FIX: Printing real-time dynamic difficulty instead of hardcoded numbers
-                println!("[Block #{}] Validating Transaction Matrix...", current_height);
-                println!("Active Proof of Adaptive Velocity (PoAV) Difficulty Level: {}", current_difficulty);
-                println!("Calculated Block Reward: {:.1} VORT (Bit-Shift Allocation)", reward_nano as f64 / 1_000_000_000.0);
+                println!("----------------------------------------------------");
+                println!("[Block #{}] Era: {} | Validating Matrix...", current_height, current_era);
+                println!("PoAV Adaptive Difficulty: {}", current_difficulty);
+                println!("Calculated Block Reward : {:.4} VORT", reward_nano as f64 / 1_000_000_000.0);
+                println!("Total Circulating Supply: {:.4} / 36,900,000 VORT", current_circulating_nano as f64 / 1_000_000_000.0);
                 
                 if reward_nano > 0 {
-                    // RAM Mitigation Logic: Explicit Block Scoping Control
                     {
                         let account_bytes = storage.get_account(&target_payout_address);
                         let mut miner_account = match account_bytes {
@@ -502,21 +479,22 @@ async fn main() {
                             },
                         };
 
-                        // Add the 10 VORT emission resulting from actual mining
-                        miner_account.balance += reward_nano;
-                        
-                        // Lock and secure permanent data to SSD/Sled DB disk
+                        miner_account.balance = miner_account.balance.saturating_add(reward_nano);
                         let _ = storage.save_account(&target_payout_address, &miner_account);
-                        println!("[DATABASE SUCCESS] Account Balance Successfully Updated On-Chain.");
-                    } 
-                    // <--- Here, the variables above are safely dropped from RAM by Rust.
+                        
+                        // Accumulate actual circulation
+                        current_circulating_nano = current_circulating_nano.saturating_add(reward_nano);
+                        let _ = storage.db.insert("chain_circulating_nano", &current_circulating_nano.to_be_bytes());
+                        let _ = storage.db.insert("chain_current_height", &(current_height + 1).to_be_bytes());
+                        let _ = storage.db.flush();
+                        
+                        println!("[DB SUCCESS] Ledger Updated. Era {} Block #{} Committed.", current_era, current_height);
+                    }
 
-                    // INTEGRATION FIX: Calculate raw processing round duration elapsed
                     let actual_block_time_secs = block_timer_start.elapsed().as_secs();
                     let evaluated_time = if actual_block_time_secs == 0 { 1 } else { actual_block_time_secs };
 
-                    // INTEGRATION FIX: Trigger adaptive difficulty interceptor from poav.rs
-                    current_difficulty = consensus::poav::PoAVConsensus::calculate_adaptive_difficulty(
+                    current_difficulty = PoAVConsensus::calculate_adaptive_difficulty(
                         current_difficulty,
                         evaluated_time,
                         target_block_time_secs
@@ -528,16 +506,15 @@ async fn main() {
                     break;
                 }
                 
-                // Test Mode / Localhost Developer: use 5 seconds heartbeat buffer
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                
+                // Consensus loop heartbeat interval
+                tokio::time::sleep(Duration::from_secs(target_block_time_secs.min(5))).await;
                 current_height += 1;
             }
             println!("====================================================");
         }        
     }
 }
-      
+
 fn echo_vortcoin_banner() {
     println!(" __      __   ____    _____   _______    _____    ____    _____   _   _ ");
     println!(" \\ \\    / /  / __ \\  |  __ \\ |__   __|  / ____|  / __ \\  |_   _| | \\ | |");
@@ -549,25 +526,17 @@ fn echo_vortcoin_banner() {
     println!(" VORTCOIN BLOCKCHAIN - PROOF OF ADAPTIVE VELOCITY (PoAV)");
 }
 
-
 // =========================================================================
-// RPC API GATEWAY INTERACTION (PRODUCTION-GRADE WITH BLOCK EXPLORER SUPPORT)
+// RPC API GATEWAY INTERACTION (PRODUCTION-GRADE CORS & CLOUDFLARE COMPATIBLE)
 // =========================================================================
-
-/// Asynchronously streams independent post and options filtering maps to prevent browser blocks.
-/// 
-/// REVISION FIX: Fully synchronized with `rpc::handler::process_unified_rpc_request` types return mapping.
 async fn start_rpc_api_gateway(storage: storage::VortcoinStorage, port: u16) {
     let storage_filter = warp::any().map(move || storage.clone());
 
-    // 1. Enforce Web3 Cross-Origin Resource Sharing (CORS) Global Parameters (Anti-CORS Browser Block)
     let cors_policy = warp::cors()
         .allow_any_origin()
         .allow_methods(vec!["POST", "OPTIONS"])
         .allow_headers(vec!["Content-Type", "Authorization"]);
 
-    // 2. Main POST /rpc route linking securely to process_unified_rpc_request (handler.rs)
-    // REVISION FIX: Explicitly converts the dynamic nested reply types into a uniform layout box response
     let rpc_route = warp::post()
         .and(warp::path("rpc"))
         .and(warp::body::json())
@@ -579,25 +548,39 @@ async fn start_rpc_api_gateway(storage: storage::VortcoinStorage, port: u16) {
             }
         });
     
-    // 3. Independent interceptor loop handling preflight OPTIONS queries from client browsers
     let options_route = warp::options()
         .and(warp::path("rpc"))
         .map(|| warp::reply::with_status(warp::reply(), warp::http::StatusCode::OK)); 
 
-    // 4. Bind unified routes architecture under a single centralized configuration instance
     let complete_gateway_routes = rpc_route
         .or(options_route)
         .with(cors_policy);
 
     println!("[VORTCOIN-RPC API] Gateway Online at http://0.0.0.0:{}", port);
-    println!("Block Explorer, APK Mobile, Tauri Desktop, and Web Miners authorized for JSON-RPC queries.");
+    println!("Authorized for: Cloudflare Reverse Proxy (rpc.vortcoin.org), Web Miners, and Mobile APK.");
 
     let host = Ipv4Addr::new(0, 0, 0, 0);
     warp::serve(complete_gateway_routes).run((host, port)).await;
 }
 
 // =========================================================================
-// MODUL INTEGRASI SMART CONTRACT WASM (Interpreter Native L1)
+// DYNAMIC GAS FEE ENGINE
+// =========================================================================
+fn get_dynamic_gas_fee(storage: &storage::VortcoinStorage) -> u64 {
+    let base_gas_fee_nano = 36_900_000; // 0.0369 VORT
+    let gas_multiplier = match storage.db.get("network_gas_multiplier") {
+        Ok(Some(bytes)) => {
+            let mut arr = [0u8; 8];
+            arr.copy_from_slice(&bytes[..8]);
+            u64::from_be_bytes(arr)
+        },
+        _ => 100,
+    };
+    (base_gas_fee_nano * gas_multiplier) / 100
+}
+
+// =========================================================================
+// WASM SMART CONTRACT INTEGRATION MODULE
 // =========================================================================
 
 /// Execution of the .wasm-formatted smart contract binary uploaded by the developer
@@ -630,23 +613,31 @@ pub fn execute_vortcoin_wasm_contract(wasm_bytecode: &[u8], function_name: &str)
 }
 
 // =========================================================================
-// DYNAMIC GAS FEE ENGINE (PREPARATION FOR MAINNET ORACLE / VOTE)
+// PROOF OF ADAPTIVE VELOCITY (PoAV) CONSENSUS ENGINE
 // =========================================================================
+pub struct PoAVConsensus;
 
-/// Dynamically refunding base gas costs in Nano-Vortcoin.
-/// In the future, this function will read the multiplier from the miners' voting power (Governance).
-fn get_dynamic_gas_fee(storage: &storage::VortcoinStorage) -> u64 {
-    let base_gas_fee_nano = 36_900_000; // Cosmic Standard: 0.0369 VORT
-    
-    // Read the gas multiplier from the database if available.
-    let gas_multiplier = match storage.db.get("network_gas_multiplier") {
-        Ok(Some(bytes)) => {
-            let mut arr = [0u8; 8];
-            arr.copy_from_slice(&bytes[..8]);
-            u64::from_be_bytes(arr)
-        },
-        _ => 100, // Default 100%
-    };
+impl PoAVConsensus {
+    pub fn calculate_adaptive_difficulty(
+        current_difficulty: u32,
+        actual_block_time_secs: u64,
+        target_block_time_secs: u64
+    ) -> u32 {
+        let variance_threshold = 5; // 5-second tolerance
+        let max_difficulty_cap = 32; 
+        let min_difficulty_floor = 12;
 
-    (base_gas_fee_nano * gas_multiplier) / 100
+        if actual_block_time_secs < (target_block_time_secs - variance_threshold) {
+            if current_difficulty < max_difficulty_cap {
+                println!("[PoAV INTERCEPTOR] Mining speed too fast ({}s < {}s). Increasing difficulty (+1).", actual_block_time_secs, target_block_time_secs);
+                return current_difficulty + 1;
+            }
+        } else if actual_block_time_secs > (target_block_time_secs + variance_threshold) {
+            if current_difficulty > min_difficulty_floor {
+                println!("[PoAV INTERCEPTOR] Mining latency detected ({}s > {}s). Reducing difficulty (-1).", actual_block_time_secs, target_block_time_secs);
+                return current_difficulty - 1;
+            }
+        }
+        current_difficulty
+    }
 }
