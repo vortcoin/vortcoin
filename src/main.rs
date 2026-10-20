@@ -407,9 +407,48 @@ async fn main() {
             println!("====================================================");
         }
 
-        Commands::NodeStart { miner_address, .. } => {
+        Commands::NodeStart { miner_address, remote } => {
             println!("====================================================");
             echo_vortcoin_banner();
+
+            if let Some(remote_url) = remote {
+                println!("[VORTCOIN CLIENT NODE] Connecting to remote anchor: {}", remote_url);
+                println!("Redirecting mining shares to remote RPC endpoint...");
+
+                let client_wallet = miner_address.clone().unwrap_or_else(|| {
+                    println!("Error: Miner address is required when connecting to a remote node.");
+                    std::process::exit(1);
+                });
+
+                let client = reqwest::Client::new();
+                let rt = tokio::runtime::Runtime::new().unwrap();
+
+                loop {
+                    let payload = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "method": "submit_web_share",
+                        "params": { "worker_wallet": client_wallet },
+                        "id": 369
+                    });
+
+                    let target_endpoint = format!("{}/rpc", remote_url);
+                    let res = rt.block_on(async {
+                        client.post(&target_endpoint)
+                            .json(&payload)
+                            .send()
+                            .await
+                    });
+
+                    match res {
+                        Ok(resp) => println!("[RPC SYNC SUCCESS] Share submitted to Contabo server: Status {}", resp.status()),
+                        Err(e) => println!("[RPC SYNC ERROR] Failed to connect to Contabo anchor: {}", e),
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_secs(30));
+                }
+            }
+
+            // 
             println!("Opening P2P Socket Connection on Standard Port: 3690");
             
             let _listener = TcpListener::bind("0.0.0.0:3690");
@@ -536,6 +575,7 @@ async fn main() {
             }
             println!("====================================================");
         }
+        
     }
 }
 

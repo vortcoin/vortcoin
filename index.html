@@ -91,7 +91,7 @@
     <!-- Native Web3 RPC API Client Connection Engine -->
     <script>
         async function fetchLiveBlockchainStats() {
-            const rpcUrl = "http://rpc.vortcoin.org"; 
+            const rpcUrl = "http://rpc.vortcoin.org/rpc"; 
 
             try {
                 const response = await fetch(rpcUrl, {
@@ -104,7 +104,7 @@
                     const data = await response.json();
                     
                     // FIXED: Properly wraps the string using template literals (backticks) for dynamic matrix binding
-                    document.getElementById("rpc-status").innerText = CONNECTED (${data.result.network.toUpperCase()});
+                    document.getElementById("rpc-status").innerText = `CONNECTED (${data.result.network.toUpperCase()})`;
                     document.getElementById("rpc-status").className = "text-2xl font-black text-emerald-400 font-mono tracking-wide";
 
                     // FIXED: Shifted the ledger rows logic inside the valid data block variables scope
